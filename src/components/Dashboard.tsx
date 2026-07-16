@@ -86,7 +86,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         {
           id: `err-${Date.now()}`,
           role: 'system',
-          content: '⚠ AI server is not reachable. Please ensure LM Studio is running at http://10.221.129.77:1234 and try again.',
+          content: '⚠ AI server is not reachable. Please check your internet connection — GreenMind uses OpenRouter for AI responses.',
           timestamp: Date.now(),
         }
       ]);
@@ -168,7 +168,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           {
             id: `err-${Date.now()}`,
             role: 'system',
-            content: `Error: ${errorMsg}. Check that LM Studio is running.`,
+            content: `Error: ${errorMsg}. Check your internet connection and try again.`,
             timestamp: Date.now(),
           }
         ]);
@@ -211,7 +211,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 {aiConnected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
-            <div className="port-details">AI: {aiConnected ? 'LM Studio online' : 'LM Studio offline'}</div>
+            <div className="port-details">AI: {aiConnected ? 'OpenRouter online' : 'OpenRouter offline'}</div>
             <div className="port-details">Device: {deviceState.port || 'None'}</div>
           </div>
         </div>
