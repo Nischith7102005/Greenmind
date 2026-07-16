@@ -12,14 +12,21 @@ interface DashboardProps {
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { deviceState, disconnect } = useDevice();
   const [aiConnected, setAiConnected] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
+
+  const loadMessages = (): ChatMessage[] => {
+    try {
+      const saved = localStorage.getItem('gm_chat_messages');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{
       id: 'welcome',
       role: 'assistant',
       content: "Hello! I'm GreenMind, your greenhouse companion. I'm connected to your telemetry feed and ready to assist you. Ask me about your crops, current environmental conditions, or optimal actions.",
       timestamp: Date.now(),
-    },
-  ]);
+    }];
+  };
+
+  const [messages, setMessages] = useState<ChatMessage[]>(loadMessages);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -43,6 +50,14 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     const interval = setInterval(check, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  // Persist messages
+  useEffect(() => {
+    if (messages.length > 1) {
+      const toSave = messages.slice(-50);
+      localStorage.setItem('gm_chat_messages', JSON.stringify(toSave));
+    }
+  }, [messages]);
 
   // Auto-scroll on new messages
   useEffect(() => {

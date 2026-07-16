@@ -124,12 +124,12 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (u) {
-        // Restore last page or default to dashboard
+        // Always restore last page if available
         const lastPage = localStorage.getItem('gm_last_page') as AppPage | null;
         if (lastPage && lastPage !== 'landing' && lastPage !== 'auth') {
           setCurrentPage(lastPage);
         } else {
-          setCurrentPage(deviceState.connected ? 'dashboard' : 'connect');
+          setCurrentPage('connect');
         }
       } else {
         setCurrentPage('landing');
