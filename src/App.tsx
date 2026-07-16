@@ -122,18 +122,28 @@ function App() {
   useEffect(() => {
     if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      const prevUser = user;
       setUser(u);
       if (u) {
-        if (!prevUser) {
-          setCurrentPage('connect');
+        // Restore last page or default to dashboard
+        const lastPage = localStorage.getItem('gm_last_page') as AppPage | null;
+        if (lastPage && lastPage !== 'landing' && lastPage !== 'auth') {
+          setCurrentPage(lastPage);
+        } else {
+          setCurrentPage(deviceState.connected ? 'dashboard' : 'connect');
         }
       } else {
         setCurrentPage('landing');
       }
     });
     return unsubscribe;
-  }, [user]);
+  }, [deviceState.connected]);
+
+  // Persist current page
+  useEffect(() => {
+    if (currentPage !== 'landing' && currentPage !== 'auth') {
+      localStorage.setItem('gm_last_page', currentPage);
+    }
+  }, [currentPage]);
 
   const onOpenDashboard = useCallback(() => {
     if (user) {

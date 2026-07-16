@@ -211,7 +211,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 {aiConnected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
-            <div className="port-details">AI: {aiConnected ? 'OpenRouter online' : 'OpenRouter offline'}</div>
             <div className="port-details">Device: {deviceState.port || 'None'}</div>
           </div>
         </div>
@@ -269,16 +268,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       <div className="dash-chat-container">
         {/* Floating Topbar */}
         <div className="chat-topbar glass-panel">
-          <div className="topbar-left">
-            <span className="ai-status-dot" style={{
-              display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-              background: aiConnected ? 'var(--green-4)' : '#e05050',
-              marginRight: 8, boxShadow: aiConnected ? '0 0 6px var(--green-4)' : 'none',
-            }} />
-            <span style={{ fontFamily: 'var(--sans)', fontSize: '0.75rem', color: 'rgba(232,228,220,0.5)' }}>
-              {aiConnected ? 'AI Online' : 'AI Offline'}
-            </span>
-          </div>
         </div>
 
         {/* Chat Feed */}
