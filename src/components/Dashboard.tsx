@@ -16,7 +16,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     {
       id: 'welcome',
       role: 'assistant',
-      content: "Hello! I'm GreenMind, your offline greenhouse companion. I'm connected to your telemetry feed and ready to assist you. Ask me about your crops, current environmental conditions, or optimal actions.",
+      content: "Hello! I'm GreenMind, your greenhouse companion. I'm connected to your telemetry feed and ready to assist you. Ask me about your crops, current environmental conditions, or optimal actions.",
       timestamp: Date.now(),
     },
   ]);
@@ -296,12 +296,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                       {message.content}
                     </ReactMarkdown>
                   </div>
-
-                  {message.sensorSnapshot && (
-                    <div className="sensor-snapshot-badge">
-                      📊 Sensors at query: {message.sensorSnapshot.temperature.toFixed(1)}°C | {message.sensorSnapshot.humidity.toFixed(0)}%
-                    </div>
-                  )}
 
                   {message.streaming && (
                     <div className="streaming-cursor-container">
