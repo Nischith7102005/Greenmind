@@ -44,25 +44,21 @@ export async function streamChat(
   onDone: () => void,
   onError: (err: string) => void,
 ) {
-  const contextMsg: AIChatMessage = {
-    role: 'system',
-    content: `${config.systemPrompt || DEFAULT_SYSTEM_PROMPT}\n\n${buildContextMessage(sensor, device)}`,
-  };
+  const systemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  const contextText = `${systemPrompt}\n\n${buildContextMessage(sensor, device)}`;
 
   const payload = {
     model: config.model,
-    messages: [contextMsg, ...messages],
+    system_prompt: contextText,
+    messages: messages.filter(m => m.role !== 'system'),
     stream: true,
   };
 
   try {
-    const res = await fetch(`${config.baseUrl}/chat/completions`, {
+    const res = await fetch(`${config.baseUrl}/api/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-        'HTTP-Referer': window.location.origin,
-        'X-Title': 'GreenMind',
       },
       body: JSON.stringify(payload),
     });
@@ -93,7 +89,7 @@ export async function streamChat(
         if (data === '[DONE]') { onDone(); return; }
         try {
           const json = JSON.parse(data);
-          const content = json.choices?.[0]?.delta?.content;
+          const content = json.choices?.[0]?.delta?.content ?? json.token;
           if (content) onChunk(content);
         } catch { /* skip malformed chunks */ }
       }
@@ -106,8 +102,10 @@ export async function streamChat(
 
 export async function checkAIConnection(): Promise<boolean> {
   try {
-    const res = await fetch(`${EMBEDDED_AI_CONFIG.baseUrl}/models`, {
-      method: 'GET',
+    const res = await fetch(`${EMBEDDED_AI_CONFIG.baseUrl}/api/v1/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: EMBEDDED_AI_CONFIG.model, messages: [], stream: false }),
       signal: AbortSignal.timeout(3000),
     });
     return res.ok;
