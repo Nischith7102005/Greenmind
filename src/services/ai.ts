@@ -1,5 +1,12 @@
 import type { AIConfig, AIChatMessage, SensorData, DeviceState } from '../types';
 
+export const EMBEDDED_AI_CONFIG: AIConfig = {
+  apiKey: '',
+  baseUrl: 'http://10.221.129.77:1234',
+  model: 'llama-3.2-8x3b-moe-dark-champion-instruct-uncensored-abliterated-18.4b',
+  systemPrompt: '',
+};
+
 const DEFAULT_SYSTEM_PROMPT = `You are GreenMind, an expert AI greenhouse assistant built for Indian farmers. You help users interpret environmental data, diagnose plant problems, recommend actions, and optimize growing conditions.
 
 Guidelines:
@@ -94,5 +101,17 @@ export async function streamChat(
     onDone();
   } catch (err: any) {
     onError(err?.message || 'Network error');
+  }
+}
+
+export async function checkAIConnection(): Promise<boolean> {
+  try {
+    const res = await fetch(`${EMBEDDED_AI_CONFIG.baseUrl}/models`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
