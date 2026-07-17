@@ -10,7 +10,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ onNavigate }: DashboardProps) {
-  const { deviceState, disconnect } = useDevice();
+  const { deviceState, disconnect, connectSimulation } = useDevice();
   const [aiConnected, setAiConnected] = useState(false);
 
   const loadMessages = (): ChatMessage[] => {
@@ -50,6 +50,13 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     const interval = setInterval(check, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-reconnect to simulated device on mount
+  useEffect(() => {
+    if (!deviceState.connected) {
+      connectSimulation();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist messages
   useEffect(() => {

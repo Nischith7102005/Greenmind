@@ -89,6 +89,7 @@ export async function streamChat(
     model: EMBEDDED_AI_CONFIG.model,
     messages: apiMessages,
     stream: true,
+    max_tokens: 4096,
   };
 
   try {
@@ -117,7 +118,23 @@ export async function streamChat(
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        // Flush any remaining data in buffer
+        if (buffer.trim()) {
+          const trimmed = buffer.trim();
+          if (trimmed.startsWith('data: ')) {
+            const data = trimmed.slice(6);
+            if (data !== '[DONE]') {
+              try {
+                const json = JSON.parse(data);
+                const content = json.choices?.[0]?.delta?.content;
+                if (content) onChunk(content);
+              } catch { /* skip */ }
+            }
+          }
+        }
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
