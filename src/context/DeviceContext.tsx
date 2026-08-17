@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import type { SensorData, DeviceMode, DeviceState } from '../types';
+import type { SensorData, DeviceState } from '../types';
 import { requestSerialPort, readSerialLoop, parseSensorJson, generateSimReading } from '../services/device';
 
 const MAX_HISTORY = 500;
