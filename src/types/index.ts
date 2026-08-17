@@ -50,6 +50,7 @@ export interface AIChatMessage {
 
 /* ═══ APP ROUTING ═══ */
 export type AppPage = 'landing' | 'auth' | 'connect' | 'dashboard';
+export type ChatMode = Extract<DeviceMode, 'serial' | 'simulated'>;
 
 /* ═══ SUGGESTED PROMPTS ═══ */
 export const SUGGESTED_PROMPTS = [

@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useDevice } from '../context/DeviceContext';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
+import type { AppPage, ChatMode } from '../types';
 
 interface ConnectDeviceProps {
   onBack: () => void;
-  onNavigate: (page: 'landing' | 'auth' | 'connect' | 'dashboard') => void;
+  onNavigate: (page: AppPage, mode?: ChatMode) => void;
 }
 
 export function ConnectDevice({ onBack, onNavigate }: ConnectDeviceProps) {
@@ -19,7 +20,7 @@ export function ConnectDevice({ onBack, onNavigate }: ConnectDeviceProps) {
     try {
       const success = await connectSerial();
       if (success) {
-        onNavigate('dashboard');
+        onNavigate('dashboard', 'serial');
       } else {
         setLocalError('Could not establish connection. Please check USB connection and try again.');
       }
@@ -32,7 +33,7 @@ export function ConnectDevice({ onBack, onNavigate }: ConnectDeviceProps) {
 
   const handleSimulate = () => {
     connectSimulation();
-    onNavigate('dashboard');
+    onNavigate('dashboard', 'simulated');
   };
 
   const handleSignOut = async () => {

@@ -8,10 +8,11 @@ import {
   createSession, updateSessionMessages, deleteSession,
   getSessionMessages, type ChatSession,
 } from '../services/sessions';
-import type { ChatMessage, AIChatMessage } from '../types';
+import type { ChatMessage, AIChatMessage, AppPage, ChatMode } from '../types';
 
 interface DashboardProps {
-  onNavigate: (page: 'landing' | 'auth' | 'connect' | 'dashboard') => void;
+  mode: ChatMode;
+  onNavigate: (page: AppPage, mode?: ChatMode) => void;
 }
 
 const WELCOME_MSG: ChatMessage = {
@@ -21,7 +22,7 @@ const WELCOME_MSG: ChatMessage = {
   timestamp: Date.now(),
 };
 
-export function Dashboard({ onNavigate }: DashboardProps) {
+export function Dashboard({ mode, onNavigate }: DashboardProps) {
   const { deviceState, disconnect, connectSimulation } = useDevice();
   const [aiConnected, setAiConnected] = useState(false);
   const [showSessions, setShowSessions] = useState(true);
@@ -107,12 +108,20 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-reconnect simulated device
+  // Restore only the mode represented by the URL. A serial connection cannot be
+  // reopened without a user gesture, but its chat route still remains intact.
   useEffect(() => {
-    if (!deviceState.connected) {
-      connectSimulation();
+    if (mode === 'simulated') {
+      if (!deviceState.connected || deviceState.mode !== 'simulated') {
+        connectSimulation();
+      }
+    } else if (deviceState.mode === 'simulated') {
+      disconnect();
     }
-  }, []); // eslint-disable-line
+    // Connection state changes are intentionally excluded: this effect responds
+    // to route changes, while the device context owns connection lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, connectSimulation, disconnect]);
 
   // Persist messages to session
   useEffect(() => {

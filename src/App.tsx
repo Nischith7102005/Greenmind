@@ -8,7 +8,8 @@ import { SignIn } from './components/SignIn';
 import { DeviceProvider, useDevice } from './context/DeviceContext';
 import { ConnectDevice } from './components/ConnectDevice';
 import { Dashboard } from './components/Dashboard';
-import type { AppPage } from './types';
+import type { AppPage, ChatMode } from './types';
+import { pathForRoute, routeFromLocation, type AppRoute } from './routing';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -115,56 +116,88 @@ const LEGAL: Record<string, { title: string; sections: { heading: string; body: 
 /* ═══ MAIN APP ═══ */
 function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [currentPage, setCurrentPage] = useState<AppPage>('landing');
+  const [authReady, setAuthReady] = useState(!auth);
+  const [route, setRoute] = useState<AppRoute>(() => routeFromLocation(window.location.pathname));
   const { deviceState } = useDevice();
 
-  // Listen to Firebase auth state — non-blocking, safe if Firebase isn't ready
+  const navigate = useCallback((nextRoute: AppRoute, replace = false) => {
+    const path = pathForRoute(nextRoute);
+    if (replace) {
+      window.history.replaceState(null, '', path);
+    } else if (window.location.pathname !== path) {
+      window.history.pushState(null, '', path);
+    }
+    setRoute(nextRoute);
+    window.scrollTo(0, 0);
+  }, []);
+
+  const navigateToPage = useCallback((page: AppPage, mode?: ChatMode) => {
+    if (page === 'dashboard') {
+      const selectedMode = mode ?? (deviceState.mode === 'serial' ? 'serial' : 'simulated');
+      localStorage.setItem('gm_device_mode', selectedMode);
+      navigate({ page: 'dashboard', mode: selectedMode });
+      return;
+    }
+    navigate({ page });
+  }, [deviceState.mode, navigate]);
+
+  // Browser back/forward should render the page represented by the URL.
+  useEffect(() => {
+    const handlePopState = () => {
+      setRoute(routeFromLocation(window.location.pathname));
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Listen once for Firebase's persisted authentication state. Waiting for this
+  // callback prevents a protected route from flashing or being reset on refresh.
   useEffect(() => {
     if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (u) {
-        // Always restore last page if available
-        const lastPage = localStorage.getItem('gm_last_page') as AppPage | null;
-        if (lastPage && lastPage !== 'landing' && lastPage !== 'auth') {
-          setCurrentPage(lastPage);
-        } else {
-          setCurrentPage('connect');
-        }
-      } else {
-        setCurrentPage('landing');
-      }
+    return onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      setAuthReady(true);
     });
-    return unsubscribe;
-  }, [deviceState.connected]);
+  }, []);
 
-  // Persist current page
+  // Apply auth guards without discarding valid deep links while Firebase loads.
   useEffect(() => {
-    if (currentPage !== 'landing' && currentPage !== 'auth') {
-      localStorage.setItem('gm_last_page', currentPage);
+    if (!authReady) return;
+    const protectedRoute = route.page === 'connect' || route.page === 'dashboard';
+    if (protectedRoute && !user) {
+      navigate({ page: 'auth' }, true);
+    } else if (route.page === 'auth' && user) {
+      navigate({ page: 'connect' }, true);
     }
-  }, [currentPage]);
+  }, [authReady, navigate, route.page, user]);
 
   const onOpenDashboard = useCallback(() => {
-    if (user) {
-      setCurrentPage(deviceState.connected ? 'dashboard' : 'connect');
+    if (!user) return;
+    if (deviceState.connected && deviceState.mode !== 'disconnected') {
+      navigateToPage('dashboard', deviceState.mode);
+    } else {
+      navigateToPage('connect');
     }
-  }, [user, deviceState.connected]);
+  }, [deviceState.connected, deviceState.mode, navigateToPage, user]);
 
-  // Routing
-  if (currentPage === 'auth' && !user) {
-    return <SignIn onBack={() => setCurrentPage('landing')} />;
+  if (!authReady) {
+    return <div className="app-route-loading" role="status" aria-label="Loading GreenMind" />;
   }
 
-  if (currentPage === 'connect' && user) {
-    return <ConnectDevice onBack={() => setCurrentPage('landing')} onNavigate={(page) => setCurrentPage(page)} />;
+  if (route.page === 'auth' && !user) {
+    return <SignIn onBack={() => navigateToPage('landing')} />;
   }
 
-  if (currentPage === 'dashboard' && user) {
-    return <Dashboard onNavigate={(page) => setCurrentPage(page)} />;
+  if (route.page === 'connect' && user) {
+    return <ConnectDevice onBack={() => navigateToPage('landing')} onNavigate={navigateToPage} />;
   }
 
-  return <LandingPage onGetStarted={() => setCurrentPage('auth')} user={user} onOpenDashboard={onOpenDashboard} />;
+  if (route.page === 'dashboard' && user) {
+    return <Dashboard mode={route.mode} onNavigate={navigateToPage} />;
+  }
+
+  return <LandingPage onGetStarted={() => navigateToPage('auth')} user={user} onOpenDashboard={onOpenDashboard} />;
 }
 
 export function RootApp() {
