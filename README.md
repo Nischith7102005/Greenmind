@@ -1,5 +1,92 @@
 # GREENMIND
 
+## 🚀 Quick Start — 50% Milestone (Dynamic Threshold Technology)
+
+Terminal-only, fully offline demo: live ESP32 sensor data feeds a local
+Ollama LLM. The LLM derives **plant-specific thresholds** once per session,
+Python checks every reading against them, and threshold breaches trigger an
+LLM explanation plus a **user-approved** actuator command back to the ESP32.
+If no ESP32 is plugged in, it automatically runs in **simulation mode** with
+a built-in demo arc, so the demo always works.
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/Nischith7102005/Greenmind.git
+cd Greenmind
+pip install -r requirements.txt
+```
+
+### 2. Start Ollama (separate terminal)
+
+```bash
+ollama serve
+```
+
+The script uses the local model `ornith:latest` (already installed).
+Verify it with `ollama list`.
+
+### 3. (Optional) Flash the ESP32
+
+Open `esp32_firmware/esp32_firmware.ino` in the Arduino IDE, install the
+Adafruit **DHT sensor library**, select **ESP32 DevKit**, and upload.
+
+Wiring:
+- Soil moisture → GPIO 34
+- pH sensor → GPIO 35
+- DHT11 (temp + humidity) → GPIO 4
+
+### 4. Run
+
+```bash
+python greenmind.py          # default port COM3
+python greenmind.py COM5     # custom port (Windows)
+python greenmind.py /dev/ttyUSB0   # Linux/Mac
+```
+
+At startup you'll be asked: `[SETUP] Enter plants for this session` —
+type e.g. `tomato`. The LLM derives thresholds and prints an ASCII table.
+
+- `[SENSOR]` lines print every 5 seconds, followed by a `[STATUS]` line:
+  `temp ✅ 27.1 | hum ✅ 64.2 | moist ⚠ 43.1 BELOW_MIN | ph ✅ 6.5`
+- `[AI]` observations print roughly every 15 seconds.
+- On a WARNING/CRITICAL breach: `[🚨 BREACH]` alert + LLM explanation +
+  `Approve actuator action? [Y/N/OVERRIDE <CMD>]`. Nothing fires without
+  your approval.
+- Every 50 readings the baseline adapts — if the environment drifted, the
+  tolerance widens and an `[ADAPT]` line prints (the "dynamic" in DTT).
+
+### Runtime commands
+
+| Command | Effect |
+| --- | --- |
+| `/switch-plant orchid` | Re-derive thresholds for new plants — same readings, different alerts (the key demo moment) |
+| `/thresholds` | Print the current threshold table |
+| `/baseline` | Print rolling baseline stats |
+| `/manual FAN_1:OFF` | Send a raw actuator command to the ESP32 |
+| `/quit` | Graceful shutdown |
+
+No ESP32 connected? You'll see
+`[SYSTEM] No ESP32 detected on COM3. Starting SIMULATION MODE.` — the
+simulator follows a demo arc (normal → moisture drops → temp rises →
+breach) so the whole DTT story can be shown without hardware. A full
+step-by-step demo script is in the comment block at the top of
+`greenmind.py`.
+
+### Milestone file structure
+
+```
+Greenmind/
+├── esp32_firmware/
+│   └── esp32_firmware.ino   # sensors + FAN_1/MOTOR_1 actuators + safety kill switch
+├── greenmind.py             # main terminal app (serial + DTT + Ollama loop)
+├── threshold_engine.py      # Dynamic Threshold Technology engine
+├── requirements.txt         # pyserial, ollama
+└── README.md
+```
+
+---
+
 ## Overview
 
 GREENMIND is a fully offline desktop application that connects to an ESP32 microcontroller via USB to monitor and manage greenhouse environments using AI. The system reads raw sensor data from the hardware, feeds it into a locally running large language model, and provides real-time, plant-specific insights and actuator recommendations — all without any internet connection, cloud services, or subscription fees. The application is free to use, while the accompanying hardware kit is sold as a one-time purchase.
