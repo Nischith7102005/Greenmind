@@ -1,5 +1,70 @@
 # GREENMIND
 
+## 🚀 Quick Start — 25% Milestone (Hardware → LLM Loop)
+
+The 25% milestone is a terminal-only demo: live ESP32 sensor data feeding a
+local Ollama LLM for real-time greenhouse analysis. No UI, no cloud, no
+threshold logic yet. If no ESP32 is plugged in, it automatically runs in
+**simulation mode**, so the demo always works.
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/Nischith7102005/Greenmind.git
+cd Greenmind
+pip install -r requirements.txt
+```
+
+### 2. Start Ollama (separate terminal)
+
+```bash
+ollama serve
+```
+
+The script uses the local model `ornith:latest` (already installed).
+Verify it with `ollama list`.
+
+### 3. (Optional) Flash the ESP32
+
+Open `esp32_firmware/esp32_firmware.ino` in the Arduino IDE, install the
+Adafruit **DHT sensor library**, select **ESP32 DevKit**, and upload.
+
+Wiring:
+- Soil moisture → GPIO 34
+- pH sensor → GPIO 35
+- DHT11 (temp + humidity) → GPIO 4
+
+### 4. Run
+
+```bash
+python greenmind.py          # default port COM3
+python greenmind.py COM5     # custom port (Windows)
+python greenmind.py /dev/ttyUSB0   # Linux/Mac
+```
+
+- `[SENSOR]` lines print every 5 seconds.
+- `[AI]` analysis prints roughly every 15 seconds (every 3rd reading).
+- Type an answer + Enter whenever the AI asks a question — it remembers
+  your answers.
+- `Ctrl+C` shuts down cleanly and prints a session summary.
+
+No ESP32 connected? You'll see
+`[SYSTEM] No ESP32 detected on COM3. Starting SIMULATION MODE.` and the
+demo continues with realistic drifting readings.
+
+### Milestone file structure
+
+```
+Greenmind/
+├── esp32_firmware/
+│   └── esp32_firmware.ino   # ESP32 DevKit firmware (115200 baud)
+├── greenmind.py             # main terminal app (serial + Ollama loop)
+├── requirements.txt         # pyserial, ollama
+└── README.md
+```
+
+---
+
 ## Overview
 
 GREENMIND is a fully offline desktop application that connects to an ESP32 microcontroller via USB to monitor and manage greenhouse environments using AI. The system reads raw sensor data from the hardware, feeds it into a locally running large language model, and provides real-time, plant-specific insights and actuator recommendations — all without any internet connection, cloud services, or subscription fees. The application is free to use, while the accompanying hardware kit is sold as a one-time purchase.
