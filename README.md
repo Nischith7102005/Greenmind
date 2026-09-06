@@ -1,11 +1,13 @@
 # GREENMIND
 
-## 🚀 Quick Start — 25% Milestone (Hardware → LLM Loop)
+## 🚀 Quick Start — 50% Milestone (Dynamic Threshold Technology)
 
-The 25% milestone is a terminal-only demo: live ESP32 sensor data feeding a
-local Ollama LLM for real-time greenhouse analysis. No UI, no cloud, no
-threshold logic yet. If no ESP32 is plugged in, it automatically runs in
-**simulation mode**, so the demo always works.
+Terminal-only, fully offline demo: live ESP32 sensor data feeds a local
+Ollama LLM. The LLM derives **plant-specific thresholds** once per session,
+Python checks every reading against them, and threshold breaches trigger an
+LLM explanation plus a **user-approved** actuator command back to the ESP32.
+If no ESP32 is plugged in, it automatically runs in **simulation mode** with
+a built-in demo arc, so the demo always works.
 
 ### 1. Clone and install
 
@@ -42,23 +44,43 @@ python greenmind.py COM5     # custom port (Windows)
 python greenmind.py /dev/ttyUSB0   # Linux/Mac
 ```
 
-- `[SENSOR]` lines print every 5 seconds.
-- `[AI]` analysis prints roughly every 15 seconds (every 3rd reading).
-- Type an answer + Enter whenever the AI asks a question — it remembers
-  your answers.
-- `Ctrl+C` shuts down cleanly and prints a session summary.
+At startup you'll be asked: `[SETUP] Enter plants for this session` —
+type e.g. `tomato`. The LLM derives thresholds and prints an ASCII table.
+
+- `[SENSOR]` lines print every 5 seconds, followed by a `[STATUS]` line:
+  `temp ✅ 27.1 | hum ✅ 64.2 | moist ⚠ 43.1 BELOW_MIN | ph ✅ 6.5`
+- `[AI]` observations print roughly every 15 seconds.
+- On a WARNING/CRITICAL breach: `[🚨 BREACH]` alert + LLM explanation +
+  `Approve actuator action? [Y/N/OVERRIDE <CMD>]`. Nothing fires without
+  your approval.
+- Every 50 readings the baseline adapts — if the environment drifted, the
+  tolerance widens and an `[ADAPT]` line prints (the "dynamic" in DTT).
+
+### Runtime commands
+
+| Command | Effect |
+| --- | --- |
+| `/switch-plant orchid` | Re-derive thresholds for new plants — same readings, different alerts (the key demo moment) |
+| `/thresholds` | Print the current threshold table |
+| `/baseline` | Print rolling baseline stats |
+| `/manual FAN_1:OFF` | Send a raw actuator command to the ESP32 |
+| `/quit` | Graceful shutdown |
 
 No ESP32 connected? You'll see
-`[SYSTEM] No ESP32 detected on COM3. Starting SIMULATION MODE.` and the
-demo continues with realistic drifting readings.
+`[SYSTEM] No ESP32 detected on COM3. Starting SIMULATION MODE.` — the
+simulator follows a demo arc (normal → moisture drops → temp rises →
+breach) so the whole DTT story can be shown without hardware. A full
+step-by-step demo script is in the comment block at the top of
+`greenmind.py`.
 
 ### Milestone file structure
 
 ```
 Greenmind/
 ├── esp32_firmware/
-│   └── esp32_firmware.ino   # ESP32 DevKit firmware (115200 baud)
-├── greenmind.py             # main terminal app (serial + Ollama loop)
+│   └── esp32_firmware.ino   # sensors + FAN_1/MOTOR_1 actuators + safety kill switch
+├── greenmind.py             # main terminal app (serial + DTT + Ollama loop)
+├── threshold_engine.py      # Dynamic Threshold Technology engine
 ├── requirements.txt         # pyserial, ollama
 └── README.md
 ```

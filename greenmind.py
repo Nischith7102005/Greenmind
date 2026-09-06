@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """
-GREENMIND — 25% Milestone
-=========================
-Fully offline hardware-to-LLM conversation loop.
+GREENMIND — 50% Milestone: Dynamic Threshold Technology (DTT)
+=============================================================
+Offline pipeline:  ESP32 (serial) -> Python DTT engine -> local Ollama LLM.
+The LLM derives plant-specific thresholds ONCE per session/switch and explains
+breaches; all per-cycle math is pure Python. Actuators fire only on approval.
 
-  ESP32 (USB serial)  --->  rolling context window  --->  local Ollama LLM
-                                                          (ornith:latest)
+DEMO SCRIPT (~8 min, works with no hardware — simulation has a built-in arc):
+ 1. Terminal A: `ollama serve`   Terminal B: `python greenmind.py`
+ 2. At "[SETUP] Enter plants": type  tomato
+    -> LLM derives tomato thresholds, ASCII table prints.
+ 3. Watch [SENSOR] + status lines: all ✅ for the first ~1.5 minutes.
+ 4. Simulation arc kicks in: moisture drifts down, then temp climbs.
+    Status flips 🟡 -> ⚠ and a [🚨 BREACH] alert fires with an LLM
+    explanation. Approve with  Y  -> "MOTOR_1:ON" is sent (sim prints it).
+    Try  N  on the next one, and  OVERRIDE FAN_1:ON  once to show control.
+ 5. KEY MOMENT — type:  /switch-plant orchid
+    Same live readings, new tighter thresholds -> sensors that were ⚠ for
+    tomato now show 🚨 CRITICAL for orchid. That is DTT in one command.
+ 6. Show /thresholds and /baseline; if running long enough (50 readings)
+    an [ADAPT] line shows tolerance widening. Finish with /quit.
 
-- No UI. Terminal only.
-- No cloud. 100% local (Ollama on localhost:11434).
-- No threshold logic. The LLM only OBSERVES, INTERPRETS and ASKS QUESTIONS.
-
-Usage:
-    python greenmind.py            # uses default port (COM3)
-    python greenmind.py COM5       # custom port (Windows)
-    python greenmind.py /dev/ttyUSB0   # custom port (Linux/Mac)
-
-If no ESP32 is found on the port, the script automatically switches to
-SIMULATION MODE so the demo always works — even without hardware.
+Commands: /switch-plant <plants> | /thresholds | /baseline | /manual <cmd> | /quit
+Breach prompt answers: Y | N | OVERRIDE <CMD>     (e.g. OVERRIDE FAN_1:OFF)
 """
 
 import sys
@@ -29,181 +34,184 @@ from datetime import datetime
 
 import serial          # pyserial
 import ollama          # local Ollama client
+from threshold_engine import ThresholdEngine, SENSORS, UNITS
 
 # ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
-SERIAL_PORT   = "COM3"            # default; override with: python greenmind.py <port>
+SERIAL_PORT   = "COM3"            # override: python greenmind.py <port>
 BAUD_RATE     = 115200
-MODEL_NAME    = "ornith:latest"   # local model already installed in Ollama
-WINDOW_SIZE   = 15                # keep the last 15 readings for trend context
-READ_INTERVAL = 5                 # seconds between sensor readings
-LLM_EVERY_N   = 3                 # query the LLM every 3rd reading (~15 s)
+MODEL_NAME    = "ornith:latest"   # local model, served by `ollama serve`
+WINDOW_SIZE   = 15                # rolling readings shown to the LLM
+READ_INTERVAL = 5                 # seconds between readings
+LLM_EVERY_N   = 3                 # conversational LLM query every 3rd reading
+ALERT_COOLDOWN = 60               # seconds between alerts for the same sensor
 
-# ANSI colors for clean terminal output
-GREEN  = "\033[92m"
-CYAN   = "\033[96m"
-YELLOW = "\033[93m"
-RED    = "\033[91m"
-GRAY   = "\033[90m"
-RESET  = "\033[0m"
-
-SYSTEM_PROMPT = (
-    "You are GREENMIND, an expert greenhouse AI assistant running entirely "
-    "offline on the user's local machine. You receive live sensor readings "
-    "from a greenhouse (temperature in °C, humidity in %, soil moisture in %, "
-    "and soil pH). Your job is to:\n"
-    "1. Acknowledge and interpret each batch of readings in 1-2 sentences.\n"
-    "2. Notice TRENDS over time (rising temp, dropping moisture, etc.) and "
-    "comment on them.\n"
-    "3. Ask the user SHORT diagnostic questions when you need more context "
-    "(e.g. 'What plants are you growing?' or 'Is your ventilation manual or "
-    "automatic?').\n"
-    "4. Keep responses concise — 2-4 sentences max per cycle. No fluff.\n"
-    "5. Use technical language appropriate for a greenhouse owner.\n"
-    "Never make up sensor values. Only discuss the data you are given."
-)
+GREEN, CYAN, YELLOW, RED, GRAY, RESET = (
+    "\033[92m", "\033[96m", "\033[93m", "\033[91m", "\033[90m", "\033[0m")
 
 # ----------------------------------------------------------------------
-# Shared state (protected by a lock where needed)
+# Shared state
 # ----------------------------------------------------------------------
-readings = deque(maxlen=WINDOW_SIZE)   # rolling window of (timestamp, dict)
+engine = ThresholdEngine(MODEL_NAME)
+readings = deque(maxlen=WINDOW_SIZE)   # (timestamp, dict)
 chat_history = []                      # conversation memory for the LLM
 state_lock = threading.Lock()
 stop_event = threading.Event()
+pending_breach = None                  # breach awaiting user approval
+last_alert = {}                        # sensor -> time of last alert
 total_readings = 0
+ser_global = None                      # serial handle (None in simulation)
+
+
+def system_prompt():
+    """Base role prompt + the ACTIVE thresholds so the LLM can cite numbers."""
+    t = engine.thresholds
+    active = ", ".join(
+        f"{s} {t[s]['min']}-{t[s]['max']}{UNITS[s]} (±{t[s]['tolerance']})"
+        for s in SENSORS)
+    return (
+        "You are GREENMIND, an expert greenhouse AI assistant running entirely "
+        "offline. You receive live sensor readings (temperature °C, humidity %, "
+        "soil moisture %, soil pH). Interpret each batch in 1-2 sentences, "
+        "notice trends, and ask short diagnostic questions when useful. "
+        "2-4 sentences max, technical tone, never invent sensor values.\n"
+        f"Active thresholds for {', '.join(engine.plants) or 'default profile'}: "
+        f"{active}. Python handles all threshold checking — you only observe "
+        "and explain.")
 
 
 # ----------------------------------------------------------------------
 # Serial connection / simulation fallback
 # ----------------------------------------------------------------------
 def connect_esp32(port):
-    """Try to open the serial port and wait for the ESP32 handshake.
-    Returns the open serial object, or None if no ESP32 is available."""
     try:
-        ser = serial.Serial(port, BAUD_RATE, timeout=2)
-        print(f"{GRAY}[SYSTEM] Port {port} opened. Waiting for ESP32 handshake...{RESET}")
-        deadline = time.time() + 10  # wait up to 10 s for the ready message
+        s = serial.Serial(port, BAUD_RATE, timeout=2)
+        print(f"{GRAY}[SYSTEM] Port {port} opened. Waiting for handshake...{RESET}")
+        deadline = time.time() + 10
         while time.time() < deadline:
-            line = ser.readline().decode(errors="ignore").strip()
+            line = s.readline().decode(errors="ignore").strip()
             if "GREENMIND_ESP32_READY" in line:
                 print(f"{GREEN}[SYSTEM] ESP32 connected on {port}.{RESET}")
-                return ser
-        ser.close()
-        print(f"{YELLOW}[SYSTEM] Port {port} open but no GREENMIND handshake received.{RESET}")
+                return s
+        s.close()
     except (serial.SerialException, OSError):
         pass
     return None
 
 
+def send_actuator(cmd):
+    """Send an actuator command over serial (or simulate the ACK)."""
+    if ser_global:
+        ser_global.write((cmd + "\n").encode())
+        print(f"{GREEN}[ACT]    Sent to ESP32: {cmd}{RESET}")
+    else:
+        print(f"{GREEN}[ACT]    (simulation) {cmd} -> ACK:{cmd}{RESET}")
+
+
 class SensorSimulator:
-    """Generates realistic greenhouse readings that slowly drift over time.
-    Temp rises ~26 -> ~30°C over 5 min, humidity drops as temp rises,
-    moisture slowly drops, pH stays stable around 6.3-6.6."""
+    """Demo arc: normal -> moisture drops -> temp rises -> breach territory.
+    Tuned so tomato shows WARNING while orchid shows CRITICAL on the same data."""
 
     def __init__(self):
         self.start = time.time()
 
     def read(self):
-        elapsed = time.time() - self.start
-        drift = min(elapsed / 300.0, 1.0)  # 0 -> 1 over 5 minutes
-
-        temp = 26.0 + 4.0 * drift + random.uniform(-0.3, 0.3)
-        hum = 65.0 - 8.0 * drift + random.uniform(-0.5, 0.5)
-        moist = 50.0 - 10.0 * drift + random.uniform(-0.4, 0.4)
-        ph = 6.45 + random.uniform(-0.15, 0.15)
-
+        el = time.time() - self.start
+        # moisture: steady 52% for 90 s, then drifts to ~40% by 4 min
+        m_drift = min(max(el - 90, 0) / 150.0, 1.0) * 12.0
+        # temp: steady 26°C for 3 min, then climbs to ~31°C by 6 min
+        t_drift = min(max(el - 180, 0) / 180.0, 1.0) * 5.0
         return {
-            "TEMP": round(temp, 1),
-            "HUM": round(hum, 1),
-            "MOIST": round(moist, 1),
-            "PH": round(ph, 1),
+            "TEMP":  round(26.0 + t_drift + random.uniform(-0.3, 0.3), 1),
+            "HUM":   round(65.0 - t_drift * 1.5 + random.uniform(-0.5, 0.5), 1),
+            "MOIST": round(52.0 - m_drift + random.uniform(-0.4, 0.4), 1),
+            "PH":    round(6.45 + random.uniform(-0.15, 0.15), 1),
         }
 
 
 def parse_line(line):
-    """Parse 'TEMP:27.4,HUM:64.2,MOIST:45.1,PH:6.5' into a dict, or None."""
+    """'TEMP:27.4,HUM:64.2,MOIST:45.1,PH:6.5' -> dict, else None."""
+    if line.startswith(("ACK:", "SAFETY:")):       # actuator echoes from ESP32
+        print(f"{GRAY}[ESP32]  {line}{RESET}")
+        return None
     try:
         parts = dict(p.split(":") for p in line.strip().split(","))
-        return {
-            "TEMP": float(parts["TEMP"]),
-            "HUM": float(parts["HUM"]),
-            "MOIST": float(parts["MOIST"]),
-            "PH": float(parts["PH"]),
-        }
+        return {k: float(parts[k]) for k in ("TEMP", "HUM", "MOIST", "PH")}
     except (ValueError, KeyError):
         return None
 
 
 # ----------------------------------------------------------------------
-# LLM interaction
+# LLM helpers (observation + breach explanation only — no math)
 # ----------------------------------------------------------------------
 def build_context_block():
-    """Format the rolling window into a compact block the LLM can scan."""
     with state_lock:
-        lines = [
-            f"[{ts}] T:{r['TEMP']} H:{r['HUM']} M:{r['MOIST']} pH:{r['PH']}"
-            for ts, r in readings
-        ]
+        lines = [f"[{ts}] T:{r['TEMP']} H:{r['HUM']} M:{r['MOIST']} pH:{r['PH']}"
+                 for ts, r in readings]
     return f"Recent readings (last {len(lines)}):\n" + "\n".join(lines)
 
 
-def query_llm():
-    """Send system prompt + conversation history + latest readings to Ollama."""
-    context = build_context_block()
-
+def ask_llm(user_content, remember=True):
     with state_lock:
-        # Keep conversation memory (LLM replies + user answers) so the model
-        # remembers what it asked and what the user said.
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend(chat_history)
-        messages.append({
-            "role": "user",
-            "content": context + "\n\nInterpret the latest readings, note any "
-                                 "trends, and ask a short question if useful."
-        })
-
+        messages = ([{"role": "system", "content": system_prompt()}]
+                    + chat_history + [{"role": "user", "content": user_content}])
     try:
-        # stream=False -> the whole response prints at once (simpler for demo)
-        response = ollama.chat(model=MODEL_NAME, messages=messages, stream=False)
-        reply = response["message"]["content"].strip()
+        r = ollama.chat(model=MODEL_NAME, messages=messages, stream=False)
+        reply = r["message"]["content"].strip()
     except Exception as e:
-        print(f"{RED}[ERROR]  Cannot reach Ollama ({e}).\n"
-              f"         Make sure it is running: open another terminal and "
-              f"run 'ollama serve', then verify the model with "
-              f"'ollama list' (expected: {MODEL_NAME}).{RESET}")
-        return
+        print(f"{RED}[ERROR]  Cannot reach Ollama ({e}). Run 'ollama serve' "
+              f"in another terminal (model: {MODEL_NAME}).{RESET}")
+        return None
+    if remember:
+        with state_lock:
+            chat_history.append({"role": "user", "content": user_content})
+            chat_history.append({"role": "assistant", "content": reply})
+            if len(chat_history) > 20:
+                del chat_history[:2]
+    return reply
 
-    with state_lock:
-        # Store a compact version of the exchange in memory
-        chat_history.append({"role": "user", "content": context})
-        chat_history.append({"role": "assistant", "content": reply})
-        # Trim history so the prompt never grows unbounded
-        if len(chat_history) > 20:
-            del chat_history[:2]
 
-    print(f"{CYAN}[AI]     {reply}{RESET}")
+def handle_breach(breach, data):
+    """Alert + LLM explanation + approval prompt for one WARNING/CRITICAL breach."""
+    global pending_breach
+    b = breach
+    print(f"{RED}[🚨 BREACH] {b['sensor']} = {b['value']}{UNITS[b['sensor']]} "
+          f"{b['direction']} (band {b['min']}-{b['max']} ±{b['tolerance']}) "
+          f"status={b['status']}{RESET}")
+    reply = ask_llm(
+        f"THRESHOLD BREACH: {b['sensor']} reads {b['value']}{UNITS[b['sensor']]}, "
+        f"{b['direction']} of the safe band {b['min']}-{b['max']} for "
+        f"{', '.join(engine.plants)}. In 2-3 short sentences: why this matters "
+        f"for these plants, and confirm whether activating {b['actuator']} is "
+        f"the right corrective action.", remember=False)
+    if reply:
+        print(f"{CYAN}[AI]     {reply}{RESET}")
+    cmd = engine.get_actuator_command(b)
+    if cmd:
+        with state_lock:
+            pending_breach = b
+        print(f"{YELLOW}[ACTION] Approve actuator action '{cmd}'? "
+              f"[Y/N/OVERRIDE <CMD>]{RESET}")
+    else:
+        print(f"{GRAY}[ACTION] No actuator mapped for {b['sensor']} "
+              f"(manual correction needed).{RESET}")
 
 
 # ----------------------------------------------------------------------
 # Thread 1 — sensor loop
 # ----------------------------------------------------------------------
-def sensor_loop(ser):
-    """Reads a sensor line every 5 s (serial or simulated), stores it in the
-    rolling window, and every 3rd reading triggers an LLM analysis."""
+def sensor_loop(sim):
     global total_readings
-    simulator = None if ser else SensorSimulator()
     count = 0
-
     while not stop_event.is_set():
-        # ---- get one reading ----
-        if ser:
-            raw = ser.readline().decode(errors="ignore").strip()
+        if ser_global:
+            raw = ser_global.readline().decode(errors="ignore").strip()
             data = parse_line(raw) if raw else None
             if data is None:
-                continue  # skip malformed / empty lines
+                continue
         else:
-            data = simulator.read()
+            data = sim.read()
 
         ts = datetime.now().strftime("%H:%M:%S")
         with state_lock:
@@ -213,74 +221,135 @@ def sensor_loop(ser):
 
         print(f"{GREEN}[SENSOR] temp:{data['TEMP']} | hum:{data['HUM']} | "
               f"moist:{data['MOIST']} | ph:{data['PH']}{RESET}")
+        print(f"[STATUS] {engine.get_status_line(data)}")
 
-        # ---- every 3rd reading (~15 s) ask the LLM to interpret ----
-        if count % LLM_EVERY_N == 0:
-            query_llm()
+        # (b) alert on WARNING/CRITICAL — one at a time, with per-sensor cooldown
+        if pending_breach is None:
+            for b in engine.check_readings(data):
+                if b["severity"] >= 2 and \
+                        time.time() - last_alert.get(b["sensor"], 0) > ALERT_COOLDOWN:
+                    last_alert[b["sensor"]] = time.time()
+                    handle_breach(b, data)
+                    break
 
-        # In simulation mode we control the pacing ourselves;
-        # with real hardware the ESP32 already sends every 5 s.
-        if not ser:
+        # (c) rolling baseline adaptation (prints [ADAPT] on drift, every 50)
+        engine.update_baseline(data)
+
+        # periodic conversational observation (unchanged from 25%)
+        if count % LLM_EVERY_N == 0 and pending_breach is None:
+            reply = ask_llm(build_context_block() +
+                            "\n\nInterpret the latest readings, note trends, "
+                            "ask a short question if useful.")
+            if reply:
+                print(f"{CYAN}[AI]     {reply}{RESET}")
+
+        if not ser_global:
             stop_event.wait(READ_INTERVAL)
 
 
 # ----------------------------------------------------------------------
-# Thread 2 — user input loop
+# Thread 2 — user input: breach approvals, slash commands, chat answers
 # ----------------------------------------------------------------------
 def input_loop():
-    """Lets the user answer the LLM's questions. Answers are injected into
-    the conversation history so the next LLM call remembers them."""
+    global pending_breach
     while not stop_event.is_set():
         try:
-            text = input()
+            text = input().strip()
         except (EOFError, KeyboardInterrupt):
             break
-        text = text.strip()
         if not text:
             continue
-        with state_lock:
-            chat_history.append({"role": "user", "content": f"(User says) {text}"})
-        print(f"{YELLOW}[YOU]    {text}{RESET}")
+        up = text.upper()
+
+        # ---- pending breach approval takes priority ----
+        if pending_breach is not None:
+            b, cmd = pending_breach, engine.get_actuator_command(pending_breach)
+            if up == "Y":
+                send_actuator(cmd)
+            elif up == "N":
+                print(f"{GRAY}[ACTION] Rejected by user. No command sent.{RESET}")
+            elif up.startswith("OVERRIDE"):
+                custom = text.split(None, 1)[1].upper() if " " in text else ""
+                if custom:
+                    send_actuator(custom)
+                else:
+                    print(f"{YELLOW}[ACTION] Usage: OVERRIDE FAN_1:ON{RESET}")
+                    continue
+            else:
+                print(f"{YELLOW}[ACTION] Answer Y, N or OVERRIDE <CMD>.{RESET}")
+                continue
+            with state_lock:
+                pending_breach = None
+            continue
+
+        # ---- runtime slash commands ----
+        if up.startswith("/SWITCH-PLANT"):
+            plants = text.split(None, 1)[1] if " " in text else ""
+            if not plants:
+                print(f"{YELLOW}[SYSTEM] Usage: /switch-plant orchid,fern{RESET}")
+                continue
+            print(f"{GRAY}[DTT] Recalculating thresholds for: {plants}{RESET}")
+            engine.derive_thresholds(plants.split(","))
+        elif up == "/THRESHOLDS":
+            engine.print_table()
+        elif up == "/BASELINE":
+            print(f"{GRAY}{engine.baseline_stats()}{RESET}")
+        elif up.startswith("/MANUAL"):
+            cmd = text.split(None, 1)[1].upper() if " " in text else ""
+            send_actuator(cmd) if cmd else print(
+                f"{YELLOW}[SYSTEM] Usage: /manual FAN_1:OFF{RESET}")
+        elif up == "/QUIT":
+            stop_event.set()
+            break
+        else:  # plain text -> chat answer for the LLM's next call
+            with state_lock:
+                chat_history.append({"role": "user",
+                                     "content": f"(User says) {text}"})
+            print(f"{YELLOW}[YOU]    {text}{RESET}")
 
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 def main():
+    global ser_global
     port = sys.argv[1] if len(sys.argv) > 1 else SERIAL_PORT
+    print(f"{GRAY}{'=' * 62}{RESET}")
+    print(f"{GREEN} GREENMIND — Dynamic Threshold Technology (50% milestone){RESET}")
+    print(f"{GRAY} Model: {MODEL_NAME} | Port: {port} | /quit or Ctrl+C to exit{RESET}")
+    print(f"{GRAY}{'=' * 62}{RESET}")
 
-    print(f"{GRAY}{'=' * 60}{RESET}")
-    print(f"{GREEN} GREENMIND — offline greenhouse AI (25% milestone){RESET}")
-    print(f"{GRAY} Model: {MODEL_NAME} | Port: {port} | Ctrl+C to quit{RESET}")
-    print(f"{GRAY}{'=' * 60}{RESET}")
-
-    ser = connect_esp32(port)
-    if ser is None:
+    ser_global = connect_esp32(port)
+    if ser_global is None:
         print(f"{YELLOW}[SYSTEM] No ESP32 detected on {port}. "
               f"Starting SIMULATION MODE.{RESET}")
 
-    print(f"{GRAY}[SYSTEM] Type an answer any time the AI asks a question, "
-          f"then press Enter.{RESET}\n")
+    # ---- session setup: plants -> LLM-derived thresholds ----
+    try:
+        plants = input("[SETUP] Enter plants for this session (comma-separated): ")
+    except (EOFError, KeyboardInterrupt):
+        plants = ""
+    engine.derive_thresholds((plants or "tomato").split(","))
 
-    sensor_thread = threading.Thread(target=sensor_loop, args=(ser,), daemon=True)
-    input_thread = threading.Thread(target=input_loop, daemon=True)
-    sensor_thread.start()
-    input_thread.start()
+    print(f"{GRAY}[SYSTEM] Commands: /switch-plant <plants> /thresholds "
+          f"/baseline /manual <cmd> /quit{RESET}\n")
+
+    t1 = threading.Thread(target=sensor_loop, args=(SensorSimulator(),), daemon=True)
+    t2 = threading.Thread(target=input_loop, daemon=True)
+    t1.start(); t2.start()
 
     try:
-        while sensor_thread.is_alive():
-            sensor_thread.join(timeout=0.5)
+        while not stop_event.is_set() and t1.is_alive():
+            time.sleep(0.5)
     except KeyboardInterrupt:
-        pass  # graceful shutdown below
+        pass
 
-    # ---- graceful shutdown ----
     stop_event.set()
-    if ser:
-        ser.close()
+    if ser_global:
+        ser_global.close()
         print(f"\n{GRAY}[SYSTEM] Serial port closed.{RESET}")
-    print(f"\n{GRAY}[SYSTEM] Shutting down. "
-          f"Collected {total_readings} sensor readings this session. "
-          f"Goodbye.{RESET}")
+    print(f"\n{GRAY}[SYSTEM] Shutting down. Collected {total_readings} "
+          f"sensor readings this session. Goodbye.{RESET}")
 
 
 if __name__ == "__main__":
