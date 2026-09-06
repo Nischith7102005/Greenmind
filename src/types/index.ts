@@ -3,8 +3,9 @@ export interface SensorData {
   temperature: number;   // °C
   humidity: number;      // %
   soilMoisture: number;  // %
-  light: number;         // lux
-  co2: number;           // ppm
+  pH: number;            // soil pH
+  light?: number;        // optional legacy/demo lux
+  co2?: number;          // optional legacy/demo ppm
   timestamp: number;     // Date.now()
 }
 

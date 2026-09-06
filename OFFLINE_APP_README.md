@@ -82,9 +82,9 @@ npm run build
 - ✅ Historical data viewing
 
 ### What Requires Internet
-- ⚠️ **AI Chat responses** - Uses OpenRouter API for AI assistance
-- ⚠️ **External images** - Images from pexels.com are cached after first load
-- ⚠️ **Google Fonts** - Cached after first load
+- ✅ **Terminal Dynamic Threshold demo** - No internet required; runs with bundled local reasoning.
+- ✅ **AI-style threshold responses** - The app now has an offline deterministic Dynamic Threshold fallback. Optional local LLM frameworks such as Ollama can be used on `localhost`, but cloud APIs are not required for the research demo.
+- ⚠️ **External images / Google Fonts in the marketing UI** - Cached after first load; the terminal review demo avoids these dependencies.
 
 ## 📁 File Structure
 
@@ -164,15 +164,15 @@ VitePWA({
 - Clear cache and reload if needed
 
 ### AI features not working offline
-- This is expected - AI requires internet connection to OpenRouter API
-- All other features work fully offline
+- The terminal demo and bundled Dynamic Threshold engine work offline.
+- If an optional local LLM such as Ollama is not running, GreenMind falls back to deterministic local threshold reasoning instead of calling a cloud API.
 
 ## 📝 Notes
 
 - The app uses **localStorage** for data persistence
 - Sensor data is stored locally on your device
 - Chat sessions are saved locally
-- No data is sent to servers except AI API requests
+- The terminal demo sends no data to servers. Optional local LLM calls target `localhost` only.
 
 ## 📄 License
 

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useDevice } from '../context/DeviceContext';
 import { streamChat, checkAIConnection, EMBEDDED_AI_CONFIG } from '../services/ai';
+import { calculateDynamicThresholds, normalizePlantNames, PLANT_PROFILES } from '../services/dynamicThreshold';
 import {
   getSessions, getCurrentSessionId, setCurrentSessionId,
   createSession, updateSessionMessages, deleteSession,
@@ -18,7 +19,7 @@ interface DashboardProps {
 const WELCOME_MSG: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: "Hello! I'm GreenMind, your greenhouse companion. I'm connected to your telemetry feed and ready to assist you. Ask me about your crops, current environmental conditions, or optimal actions.",
+  content: "Hello! I'm GreenMind, your offline greenhouse companion. Tell me the plants in this session, then I'll derive plant-aware dynamic thresholds from the ESP32/demo telemetry. For this review phase I only recommend fan/motor actions — no actuator command is sent.",
   timestamp: Date.now(),
 };
 
@@ -46,6 +47,15 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(loadMessages);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const currentPlants = useMemo(() => {
+    const text = messages.map(m => m.content).join(' ').toLowerCase();
+    const matched = PLANT_PROFILES.map(p => p.name).filter(name => text.includes(name));
+    return normalizePlantNames(matched.length ? matched : ['tomato']);
+  }, [messages]);
+  const thresholdState = useMemo(
+    () => calculateDynamicThresholds(deviceState.history, currentPlants),
+    [deviceState.history, currentPlants]
+  );
 
   const [attachedFile, setAttachedFile] = useState<{
     name: string; content: string; type: string; size: number;
@@ -162,15 +172,6 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
   const handleSend = async (textToSend: string) => {
     if (!textToSend.trim() && !attachedFile) return;
 
-    if (!aiConnected) {
-      setMessages(prev => [...prev, {
-        id: `err-${Date.now()}`, role: 'system',
-        content: '⚠ AI server is not reachable. Please check your internet connection — GreenMind uses OpenRouter for AI responses.',
-        timestamp: Date.now(),
-      }]);
-      return;
-    }
-
     const currentSensor = deviceState.sensorData;
     const userMsgId = `user-${Date.now()}`;
     const userMsgContent = textToSend.trim();
@@ -233,7 +234,7 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
         setMessages(prev => [
           ...prev.filter(m => m.id !== assistantMsgId),
           { id: `err-${Date.now()}`, role: 'system',
-            content: `Error: ${errorMsg}. Check your internet connection and try again.`,
+            content: `Error: ${errorMsg}. Local fallback should keep GreenMind usable offline; please retry.`,
             timestamp: Date.now(),
           }
         ]);
@@ -286,11 +287,11 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
         </div>
 
         <div className="widget-section">
-          <div className="section-label">Connection</div>
+          <div className="section-label">Offline Reasoning</div>
           <div className="connection-info">
             <div className="connection-status">
               <span className="status-text" style={{ color: aiConnected ? '#52b788' : '#e05050' }}>
-                {aiConnected ? 'Connected' : 'Disconnected'}
+                {aiConnected ? 'Local engine ready' : 'Starting local engine'}
               </span>
             </div>
             <div className="port-details">Device: {deviceState.port || 'None'}</div>
@@ -317,14 +318,9 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
                 <div className="visual-bar" style={{ '--progress': `${deviceState.sensorData.soilMoisture}%` } as React.CSSProperties} />
               </div>
               <div className="telemetry-item">
-                <span className="item-label">Light Intensity</span>
-                <span className="item-value">{deviceState.sensorData.light.toFixed(0)} <span className="unit">lux</span></span>
-                <div className="visual-bar" style={{ '--progress': `${Math.min(100, (deviceState.sensorData.light / 2000) * 100)}%` } as React.CSSProperties} />
-              </div>
-              <div className="telemetry-item">
-                <span className="item-label">CO₂ Level</span>
-                <span className="item-value">{deviceState.sensorData.co2.toFixed(0)} <span className="unit">ppm</span></span>
-                <div className="visual-bar" style={{ '--progress': `${Math.min(100, (deviceState.sensorData.co2 / 1500) * 100)}%` } as React.CSSProperties} />
+                <span className="item-label">Soil pH</span>
+                <span className="item-value">{(deviceState.sensorData.pH ?? 7).toFixed(2)} <span className="unit">pH</span></span>
+                <div className="visual-bar" style={{ '--progress': `${Math.min(100, ((deviceState.sensorData.pH ?? 7) / 14) * 100)}%` } as React.CSSProperties} />
               </div>
             </div>
           ) : (
@@ -335,6 +331,23 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
               <p>Waiting for sensor stream...</p>
             </div>
           )}
+        </div>
+
+        <div className="widget-section threshold-hud">
+          <div className="section-label">Dynamic Threshold Technology</div>
+          <div className="threshold-summary">{thresholdState.summary}</div>
+          <div className="threshold-list">
+            {thresholdState.assessments.map((item) => {
+              const band = thresholdState.thresholds[item.key];
+              return (
+                <div key={item.key} className={`threshold-row status-${item.status}`}>
+                  <span>{item.label}</span>
+                  <strong>{band.min}–{band.max}{item.unit}</strong>
+                </div>
+              );
+            })}
+          </div>
+          <div className="threshold-note">Actuator phase disabled: recommendations only.</div>
         </div>
 
         <div className="sidebar-footer">
@@ -387,7 +400,7 @@ export function Dashboard({ mode, onNavigate }: DashboardProps) {
         <div className="chat-footer">
           {messages.length === 1 && (
             <div className="suggested-prompts-container">
-              {["What's causing my temperature spikes?", "How can I reduce humidity?", "Is my soil moisture too low for tomatoes?", "Predict pest risk this week", "Optimize my ventilation schedule", "Interpret my current sensor data"].map((prompt, i) => (
+              {["Set this session for tomatoes", "Show dynamic thresholds", "Is my soil moisture too low for tomatoes?", "Should I recommend the fan?", "Explain the observation phase", "Interpret my current sensor data"].map((prompt, i) => (
                 <button key={i} className="suggested-chip"
                   onClick={() => !isLoading && handleSend(prompt)}
                   disabled={isLoading}>{prompt}</button>

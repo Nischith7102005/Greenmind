@@ -48,8 +48,10 @@ export function parseSensorJson(raw: string): SensorData | null {
       temperature: Number(obj.temperature ?? obj.temp ?? obj.t) || 0,
       humidity: Number(obj.humidity ?? obj.hum ?? obj.h) || 0,
       soilMoisture: Number(obj.soilMoisture ?? obj.soil ?? obj.sm) || 0,
-      light: Number(obj.light ?? obj.lux ?? obj.l) || 0,
-      co2: Number(obj.co2 ?? obj.carbon ?? obj.c) || 0,
+      pH: Number(obj.pH ?? obj.ph ?? obj.soilPh ?? obj.soilPH) || 7,
+      // Kept as optional legacy fields so older demo firmware still parses.
+      light: obj.light !== undefined || obj.lux !== undefined || obj.l !== undefined ? Number(obj.light ?? obj.lux ?? obj.l) || 0 : undefined,
+      co2: obj.co2 !== undefined || obj.carbon !== undefined || obj.c !== undefined ? Number(obj.co2 ?? obj.carbon ?? obj.c) || 0 : undefined,
       timestamp: Date.now(),
     };
   } catch { return null; }
@@ -60,8 +62,7 @@ const BASE: Omit<SensorData, 'timestamp'> = {
   temperature: 28.5,
   humidity: 72,
   soilMoisture: 48,
-  light: 850,
-  co2: 420,
+  pH: 6.4,
 };
 
 function clamp(v: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, v)); }
@@ -69,17 +70,15 @@ function clamp(v: number, lo: number, hi: number) { return Math.min(hi, Math.max
 export function generateSimReading(prev: SensorData | null): SensorData {
   const p = prev || { ...BASE, timestamp: 0 };
   const hour = new Date().getHours();
-  // Day/night cycle for light and temperature
+  // Day/night cycle for temperature; pH drifts slowly like a real probe/calibration setup.
   const dayFactor = Math.sin((hour - 6) * Math.PI / 12);
   const tempBase = 25 + dayFactor * 6;
-  const lightBase = Math.max(0, dayFactor * 1200);
 
   return {
     temperature: clamp(p.temperature + (tempBase - p.temperature) * 0.1 + (Math.random() - 0.5) * 0.8, 18, 42),
     humidity: clamp(p.humidity + (Math.random() - 0.5) * 3 - dayFactor * 0.5, 40, 95),
     soilMoisture: clamp(p.soilMoisture + (Math.random() - 0.5) * 2 - 0.15, 20, 80),
-    light: clamp(p.light + (lightBase - p.light) * 0.15 + (Math.random() - 0.5) * 60, 0, 2000),
-    co2: clamp(p.co2 + (Math.random() - 0.5) * 20 + (dayFactor < 0 ? 8 : -5), 250, 1200),
+    pH: clamp((p.pH ?? 6.4) + (Math.random() - 0.5) * 0.06, 4.5, 8.5),
     timestamp: Date.now(),
   };
 }
