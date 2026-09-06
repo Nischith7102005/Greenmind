@@ -922,3 +922,55 @@ h1, h2, h3 {
   .sessions-sidebar { width: 180px; }
   .sessions-sidebar.closed { width: 0; }
 }
+
+/* Dynamic Threshold Technology review panel */
+.threshold-hud {
+  border-top: 1px solid rgba(149, 213, 178, 0.16);
+  padding-top: 1rem;
+}
+
+.threshold-summary {
+  color: rgba(238, 255, 244, 0.86);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-bottom: 0.75rem;
+}
+
+.threshold-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.threshold-row {
+  align-items: center;
+  background: rgba(8, 28, 21, 0.45);
+  border: 1px solid rgba(149, 213, 178, 0.12);
+  border-radius: 0.75rem;
+  color: rgba(238, 255, 244, 0.82);
+  display: flex;
+  font-size: 0.78rem;
+  justify-content: space-between;
+  padding: 0.55rem 0.65rem;
+}
+
+.threshold-row strong {
+  color: #b7efc5;
+  font-weight: 700;
+}
+
+.threshold-row.status-low-warning,
+.threshold-row.status-high-warning {
+  border-color: rgba(255, 209, 102, 0.55);
+}
+
+.threshold-row.status-critical-low,
+.threshold-row.status-critical-high,
+.threshold-row.status-anomaly {
+  border-color: rgba(239, 71, 111, 0.65);
+}
+
+.threshold-note {
+  color: rgba(183, 239, 197, 0.72);
+  font-size: 0.72rem;
+  margin-top: 0.65rem;
+}

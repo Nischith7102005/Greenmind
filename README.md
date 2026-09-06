@@ -1,224 +1,148 @@
-# GREENMIND
+# GREENMIND — Offline Greenhouse AI
 
-## Overview
+GREENMIND is an offline desktop/terminal application for greenhouse monitoring and plant-aware decision support. It connects to ESP32-style telemetry over USB serial, reads raw sensor data, and reasons locally about greenhouse conditions. The current review branch focuses on implementing **Dynamic Threshold Technology** up to the actuator decision boundary: GREENMIND can recommend fan or motor actions, but it does **not** physically trigger actuators in this phase.
 
-GREENMIND is a fully offline desktop application that connects to an ESP32 microcontroller via USB to monitor and manage greenhouse environments using AI. The system reads raw sensor data from the hardware, feeds it into a locally running large language model, and provides real-time, plant-specific insights and actuator recommendations — all without any internet connection, cloud services, or subscription fees. The application is free to use, while the accompanying hardware kit is sold as a one-time purchase.
+## Project overview
 
-## What Makes It Unique
+GREENMIND is designed for greenhouse owners who need technical, local, no-cloud greenhouse intelligence. Each session represents one greenhouse or growing area. The owner specifies the location and plants being grown, then live sensor readings are associated with that session. The AI/threshold engine interprets the readings in plant context and produces real-time recommendations.
 
-The core novelty of GREENMIND is not the chatbot interface itself, but the complete pipeline it establishes: raw hardware sensor readings flowing directly into an AI system that interprets them in the context of specific plants and growing conditions, and then uses that understanding to dynamically control physical actuators. This entire loop — from sensing to reasoning to acting — runs completely offline on the user's local machine, which distinguishes it from existing greenhouse management solutions that rely on cloud-based dashboards and static, manually configured rules.
+Implemented demo sensors:
 
-## Hardware Setup
+- soil moisture sensor,
+- pH sensor,
+- humidity sensor,
+- temperature sensor.
 
-The hardware component is built around an ESP32 microcontroller connected to the user's PC via a USB serial connection. The ESP32 is wired to four sensors:
-
-- **Soil Moisture Sensor** — measures the water content in the growing medium
-- **pH Sensor** — monitors the acidity or alkalinity of the soil
-- **Humidity Sensor** — tracks the relative humidity inside the greenhouse
-- **Temperature Sensor** — records the ambient air temperature
-
-In addition to sensors, the ESP32 also controls output actuators. For the current demonstration scope, these include fans and motors, which can be triggered to regulate temperature, ventilation, and irrigation. The USB serial connection serves as a two-way communication channel: sensor data flows from the ESP32 to the desktop app, and actuator commands flow from the app back to the ESP32.
-
-## Software Architecture
-
-GREENMIND is a desktop application that runs entirely on the user's local machine. There is no cloud backend, no remote database, and no API calls to external services. All data processing, storage, and AI inference happen locally.
-
-The application uses a chat-session-based architecture. Each chat session represents a single greenhouse or growing area. When a user opens a new session, they specify the location and the types of plants being grown there. The live sensor data from the ESP32 is then associated with that session, and the AI processes it within that specific context. This means a user managing multiple greenhouses can maintain separate sessions, each with its own plant profiles, sensor readings, and threshold configurations, without any cross-contamination of data.
-
-The AI engine is a locally hosted large language model. The system is model-agnostic, meaning it can run on any suitable local LLM framework such as Ollama, llama.cpp, or GPT4All, depending on the user's hardware capabilities. Since the application runs on a desktop computer rather than a mobile device, it has access to significantly more computational power, allowing it to run more capable models entirely offline.
+The ESP32 protocol is intentionally simple: hardware reads sensors and streams JSON lines; intelligence stays in the desktop application.
 
 ## Dynamic Threshold Technology
 
-The central research contribution of GREENMIND is its Dynamic Threshold Technology. Traditional greenhouse automation systems rely on hardcoded, static thresholds — for example, a rule that says "if temperature exceeds 35°C, turn on the fan." These thresholds are manually set by the user or the installer and do not adapt to different plant species, seasonal changes, or evolving microclimates within the greenhouse.
+Traditional greenhouse systems use fixed rules like:
 
-GREENMIND eliminates this limitation by leveraging the LLM's existing botanical knowledge. When a user specifies the plants growing in a particular greenhouse, the AI cross-references the live sensor data against its understanding of the optimal growing conditions for those species. Over time, as data is collected and averaged within each chat session, the AI dynamically calculates and adjusts the ideal thresholds for each sensor. It determines not only what the threshold values should be but also which actuators should respond when those thresholds are crossed and how aggressively they should act.
+```text
+if temperature > 35°C, turn on fan
+```
 
-For example, if a session is configured for tomatoes, the AI knows that tomatoes thrive at 22–28°C with 60–70% humidity and a soil pH of 6.0–6.8. If the temperature sensor starts reading 32°C, the AI recognizes this as outside the optimal range for tomatoes specifically and recommends activating the fans. In a different session configured for orchids, the same 32°C reading might trigger a more urgent response with different actuator combinations, because orchids have different tolerances. The thresholds are never hardcoded — they emerge from the interaction between the live data and the AI's knowledge base, and they adapt continuously.
+GREENMIND replaces this with adaptive threshold bands derived from:
 
-## Actuator Control and User Authority
+1. plant types assigned to the current session,
+2. live ESP32/simulated sensor readings,
+3. botanical knowledge embedded locally in the app or supplied by a local LLM.
 
-While the AI handles the analysis and threshold calculation, the actual triggering of actuators remains under the manual control of the greenhouse owner. When the AI detects that a threshold has been crossed, it recommends a specific action through the chat interface — for instance, "Soil moisture has dropped to 18%, which is below the optimal range for your peppers. Recommend activating Motor 1 for irrigation." The owner then decides whether to approve or ignore the recommendation.
+The app starts in an observation phase, builds a rolling baseline of greenhouse behaviour, and then gently adjusts sensor bands for that specific session. When readings cross a band, GREENMIND explains why the condition matters for the selected plants and recommends an owner-approved response.
 
-This manual control model exists because actuator operation carries real costs — electricity, water usage, equipment wear — and the greenhouse owner is the one managing those expenses. The AI advises, but the human decides. Additionally, the owner retains full override capability at all times. They can manually trigger any actuator regardless of what the AI recommends, or they can suppress an AI-suggested action. The system is designed to give the owner complete authority over their greenhouse environment, with the AI serving as an intelligent assistant rather than an autonomous controller.
+Actuator control status for this phase:
 
-## Target Audience
+- fan recommendation: implemented as advisory text only,
+- motor irrigation recommendation: implemented as advisory text only,
+- physical ON/OFF serial commands: intentionally not implemented yet,
+- safety/kill-switch state for impossible values: implemented as prototype logic.
 
-GREENMIND is designed specifically for greenhouse owners, not open-field farmers. Greenhouse owners typically operate controlled environments with existing infrastructure for sensors and actuators, and they possess the technical literacy to understand sensor readings, threshold values, and automation logic. The AI can therefore communicate in precise, technical language — discussing soil EC levels, pH ranges, and humidity differentials — without needing to simplify its output. This is a deliberate design choice that distinguishes GREENMIND from farmer-facing agricultural tools that prioritize simplicity over granularity.
+See [`docs/DYNAMIC_THRESHOLD_TECHNOLOGY.md`](docs/DYNAMIC_THRESHOLD_TECHNOLOGY.md) for the research explanation.
 
-## Safety and Error Handling
+## Terminal demo quick start
 
-The system includes a safety layer managed by the AI, which continuously monitors sensor readings for anomalies or impossible values that might indicate hardware malfunction. In the event of a critical error — such as a sensor returning erratic data that could trigger an actuator unnecessarily — a kill-switch mechanism shuts down all actuator outputs and logs the error. The system can then report the bug to the development team or a service center for diagnosis. For the current demonstration scope, this safety layer is implemented as a functional prototype rather than a production-grade failsafe.
-
-## Academic Context
-
-GREENMIND is developed as an academic proof of concept intended for demonstration to lecturers and evaluation as a research project. The live demonstration involves connecting the ESP32 to a laptop via USB, showing real-time sensor data flowing into the application, interacting with the AI chatbot about plant health and environmental conditions, and triggering physical actuators based on the AI's dynamic threshold analysis. The accompanying research paper focuses on the Dynamic Threshold Technology as its primary contribution, positioning it as a novel approach to greenhouse automation that replaces manual calibration with AI-driven, plant-aware, self-adjusting threshold management running entirely on edge hardware without cloud dependency.
-
----
-
-## Setup & Run Guide
-
-### Prerequisites
-
-- **Node.js** v18 or later — [download here](https://nodejs.org/)
-- A terminal / command prompt
-
----
-
-## Quick Start
+Prerequisite: Node.js 18 or newer.
 
 ```bash
-# 1. Open a terminal in the project folder
-cd greenmind
-
-# 2. Install all dependencies
+git clone <repo-url>
+cd Greenmind
 npm install
+npm run terminal
+```
 
-# 3. Start the dev server
+Manual JSON-input mode:
+
+```bash
+npm run terminal:manual
+```
+
+Expected ESP32 JSON line:
+
+```json
+{"temperature":28.4,"humidity":67,"soilMoisture":54,"pH":6.4}
+```
+
+Useful terminal commands:
+
+```text
+greenmind> Show dynamic thresholds
+greenmind> Is my soil moisture too low for tomatoes?
+greenmind> Should I recommend the fan?
+greenmind> plants orchids
+greenmind> paste {"temperature":32,"humidity":74,"soilMoisture":41,"pH":6.1}
+greenmind> paste {"temperature":999,"humidity":74,"soilMoisture":41,"pH":6.1}
+greenmind> quit
+```
+
+Best-effort serial file mode on Linux/macOS:
+
+```bash
+npm run terminal -- --serial /dev/ttyUSB0
+```
+
+For portability, the terminal demo avoids native serial dependencies. The serial mode reads JSON lines from a device file but does not configure baud rate by itself.
+
+## Local Ollama model
+
+Your installed model is supported by default:
+
+```text
+ornith:latest
+```
+
+Run this in another terminal tab:
+
+```bash
+ollama serve
+```
+
+Then run GREENMIND:
+
+```bash
+npm run terminal
+```
+
+The terminal app calls only the local Ollama server at `http://localhost:11434`; it does not use internet APIs. If Ollama is not running, it automatically falls back to the bundled offline Dynamic Threshold reasoning engine.
+
+Optional overrides:
+
+```bash
+OLLAMA_MODEL=ornith:latest npm run terminal
+OLLAMA_URL=http://localhost:11434 npm run terminal
+```
+
+## React app
+
+The existing Vite/React app is still present and now includes the same offline dynamic threshold engine for local fallback reasoning. To run it:
+
+```bash
 npm run dev
 ```
 
-Open the URL shown in your terminal (usually `http://localhost:5173`).
-
----
-
-## What You'll See
-
-| Section | What It Shows |
-|---------|---------------|
-| **Hero** | "GreenMind" title with parallax greenhouse images scrolling at different speeds |
-| **Sticky Cards** | 4 cards that stack/unstack as you scroll — Smart Sensing, AI Insights, Predictive Guard, AI Companion |
-| **How It Works** | 3 steps: Connect → Monitor → Optimize |
-| **Outro** | "Grow Smarter, Not Harder" with a call-to-action |
-| **Footer** | Product links, legal pages, contact info |
-
----
-
-## Authentication (Get Started Button)
-
-Clicking **"Get Started"** opens a sign-in page powered by **Firebase Auth** (email + password).
-
-### Already Working
-
-- Firebase is configured with the project credentials — no extra setup needed
-- Users can **sign up** with email & password
-- Users can **sign in** if they already have an account
-- Sessions persist across page refreshes
-
-### Enable Email/Password Auth in Firebase
-
-If sign-in doesn't work, you may need to enable the auth provider:
-
-1. Go to [Firebase Console](https://console.firebase.google.com/project/greenmind-4e51e)
-2. Click **Authentication** in the left sidebar
-3. Click **Sign-in method** tab
-4. Click **Email/Password**
-5. Toggle **Enable** → click **Save**
-
-That's it. No additional config needed.
-
----
-
-## Build for Production
+To build it:
 
 ```bash
-# Creates an optimized single-file build in dist/
 npm run build
-
-# Preview the production build locally
-npm run preview
 ```
 
-The production build outputs a single `dist/index.html` with all JS/CSS inlined.
+## Important files
 
----
+| File | Purpose |
+|---|---|
+| `terminal/greenmind-terminal.mjs` | Clone-and-run offline terminal version for lecturer review. |
+| `src/services/dynamicThreshold.ts` | Dynamic Threshold Technology implementation used by the React app. |
+| `src/services/ai.ts` | Local-only chat reasoning: optional Ollama on localhost, deterministic offline fallback. |
+| `src/services/device.ts` | ESP32 JSON parsing and greenhouse simulator. |
+| `docs/DYNAMIC_THRESHOLD_TECHNOLOGY.md` | Research/technology write-up. |
+| `docs/LECTURER_DEMO_GUIDE.md` | Demo script for review. |
+| `docs/ARCHITECTURE_OFFLINE_TERMINAL.md` | Offline terminal architecture. |
+| `examples/esp32-sensor-protocol.md` | ESP32 JSON protocol notes. |
 
-## Deploy to Firebase Hosting
+## Offline position
 
-```bash
-# 1. Install Firebase CLI (one-time)
-npm install -g firebase-tools
+The terminal review demo has no cloud backend, remote database, subscription service, or external AI API. All threshold calculation and assistant-style explanation run locally. Optional local LLM frameworks such as Ollama can be connected through `localhost`, but they are not required for the demo to work.
 
-# 2. Log in to your Firebase account
-firebase login
+## Academic positioning
 
-# 3. Initialize hosting in the project folder
-firebase init hosting
-#   - Select project: greenmind-4e51e
-#   - Public directory: dist
-#   - Single-page app: Yes
-#   - Don't overwrite dist/index.html
-
-# 4. Build the project
-npm run build
-
-# 5. Deploy
-firebase deploy --only hosting
-```
-
-Your app will be live at: `https://greenmind-4e51e.web.app`
-
----
-
-## Project Structure
-
-```
-├── index.html                  ← Entry HTML, Google Fonts
-├── package.json                ← Dependencies: firebase, gsap, lenis, react
-├── tsconfig.json               ← TypeScript config
-├── vite.config.ts              ← Vite + Tailwind + SingleFile plugin
-│
-├── public/
-│   └── images/
-│       ├── card-sensing.jpg        ← Card 1 image
-│       ├── hero-distant.jpg        ← Parallax layer 1 (far)
-│       ├── hero-greenhouse.jpg     ← Parallax layer 2 (mid)
-│       ├── hero-foreground.jpg     ← Parallax layer 3 (near)
-│       ├── outro-field.jpg         ← Card 4 image
-│       └── section-wide.jpg        ← Outro background
-│
-└── src/
-    ├── main.tsx               ← React entry point
-    ├── App.tsx                ← Main app: Firebase auth + landing page
-    ├── firebase.ts            ← Firebase config & auth setup
-    ├── index.css              ← All custom styles
-    ├── vite-env.d.ts          ← Vite type declarations
-    │
-    └── components/
-        └── SignIn.tsx          ← Firebase email/password auth UI
-```
-
----
-
-## Tech Stack
-
-| Technology | Purpose |
-|-----------|---------|
-| React 19 | UI framework |
-| Vite 7 | Build tool & dev server |
-| Tailwind CSS 4 | Utility-first CSS |
-| GSAP + ScrollTrigger | Scroll animations & sticky cards |
-| Lenis | Smooth scrolling |
-| Firebase Auth | User authentication (email/password) |
-
----
-
-## Troubleshooting
-
-### Page is blank
-- Make sure you ran `npm install` before `npm run dev`
-- Check the browser console (F12) for errors
-
-### Images not loading
-- Images are in `public/images/` — make sure that folder exists
-- 2 cards use external Pexels URLs which require internet; the rest are local files
-
-### "Get Started" doesn't open sign-in page
-- Open browser console (F12) — if you see Firebase errors, ensure Email/Password auth is enabled in Firebase Console (see above)
-
-### Build fails
-- Delete `node_modules` and `dist`, then:
-  ```bash
-  rm -rf node_modules dist
-  npm install
-  npm run build
-  ```
+GREENMIND is an academic proof of concept for offline, edge-based greenhouse automation. The research paper should focus on Dynamic Threshold Technology: a shift from manually engineered thresholds to AI-inferred, plant-aware, adaptive threshold bands generated per greenhouse, per plant type, and per session while keeping actuator authority with the owner.

@@ -119,7 +119,7 @@ export function ConnectDevice({ onBack, onNavigate }: ConnectDeviceProps) {
               </svg>
             </div>
             <h3>Simulated Device</h3>
-            <p>Bypass physical hardware. Generate realistic greenhouse data (temperature, humidity, light, CO₂) dynamically for testing.</p>
+            <p>Bypass physical hardware. Generate realistic greenhouse data (temperature, humidity, soil moisture, pH) dynamically for testing.</p>
             <button className="btn-secondary connect-btn" onClick={handleSimulate}>
               Continue with Simulated Device
             </button>
